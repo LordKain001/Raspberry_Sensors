@@ -8,33 +8,52 @@ import sys
 
 
 
-clock = 16
-address = 20
-dataOut = 21
+Clock = 16
+Address = 20
+DataOut = 21
+Chipselect = 12
+EoC = 25
+GPIO.setmode(GPIO.BCM)
 
 pp = pprint.PrettyPrinter(indent=4)
 
 
 
-
 class RPS_TLC1543:
-	def __init__(self, clock, address, dataOut):
+	def __init__(self, clock, address, dataOut, chipselect, endOfConvertion):
 		self.clock = clock
 		self.address = address
 		self.dataOut = dataOut
+		self.cs = chipselect
+		self.EoC = endOfConvertion
 		GPIO.setmode(GPIO.BCM)
 		GPIO.setwarnings(True)
+
 		GPIO.setup(self.clock,GPIO.OUT)
 		GPIO.setup(self.address,GPIO.OUT)
 		GPIO.setup(self.dataOut,GPIO.IN,GPIO.PUD_UP)
+		GPIO.setup(self.cs,GPIO.OUT)
+		GPIO.setup(self.EoC,GPIO.IN,GPIO.PUD_UP)
+
+		GPIO.output(self.address,GPIO.LOW)
+		GPIO.output(self.clock,GPIO.LOW)
+		GPIO.output(self.cs,GPIO.HIGH)
+
 		
 		self.data = []
+		self.counter = 0
+
+	def GetNumOfMeasurement(self):
+		return self.counter
 		
-	def GetADCData(self):
+	def GetAdcRawData(self):
 		return self.data
 
 	def UpdateAllAdcChannels(self):
-		self.data.clear()
+		GPIO.output(self.clock,GPIO.LOW)
+		GPIO.output(self.cs,GPIO.LOW)
+		#time.sleep(0.001)
+		adcData = []
 	#init with first Adress start at 0
 		for i in range(0,16):
 			GPIO.output(self.address,GPIO.LOW)
@@ -43,9 +62,18 @@ class RPS_TLC1543:
 			#pprint.pprint("adress0:" + str(i))
 		for channel in range (1,15):
 			#pprint.pprint("Channel:" + str(channel))
-			time.sleep(0.01)
+			#time.sleep(0.01)
+			sleepcount = 0
+			while not GPIO.input(self.EoC):
+				#time.sleep(0.001)
+				sleepcount += 1
+			#print(sleepcount)
+
+			#time.sleep(0.00005)
+			GPIO.output(self.cs,GPIO.LOW)
+			#time.sleep(0.00005)
 			value = 0
-			for i in range(1,17):
+			for i in range(1,11):
 				#pprint.pprint("Get:" + str(i))
 				if i <=4:
 					if((channel >> (4 - i)) & 0x01):
@@ -65,22 +93,32 @@ class RPS_TLC1543:
 						value |= 0x01
 					GPIO.output(self.clock,GPIO.LOW)
 				if i>10:
+					GPIO.output(self.cs,GPIO.HIGH)
 					GPIO.output(self.clock,GPIO.HIGH)
 					GPIO.output(self.clock,GPIO.LOW)
-			self.data.append([channel-1,value])
-		if (self.data[11][1] == 512 and self.data[12][1] == 0 and self.data[13][1] == 1023):
-			print("Data OK")
+			adcData.append([channel-1,value])
+
+
+		
+		if (adcData[11][1] == 512 and adcData[12][1] == 0 and adcData[13][1] == 1023):
+			#print("Data OK")
 			try:
-				self.data.pop(13)
-				self.data.pop(12)
-				self.data.pop(11)
+				adcData.pop(13)
+				adcData.pop(12)
+				adcData.pop(11)
+				self.data.clear()
+				self.data = adcData
+				self.counter =  self.counter + 1
 			except:
 				pass
 		else:
-			print("Data corrupted")
-			self.data.clear()
-		
+			#print("Data corrupted")
+			#pprint.pprint(self.counter)
+			self.counter =  self.counter -1
+			adcData.clear()
 
+		GPIO.output(self.cs,GPIO.HIGH)
+		
 	def __del__(self):
 		GPIO.cleanup()
 
@@ -88,14 +126,20 @@ class RPS_TLC1543:
 
 
 try:
-	
-	ADC = RPS_TLC1543(clock,address,dataOut)
+	start = time.time()	
+	ADC = RPS_TLC1543(Clock,Address,DataOut,Chipselect, EoC)
 	
 	while True:
+		
 		ADC.UpdateAllAdcChannels()
-		pprint.pprint(ADC.GetADCData())
-		time.sleep(2)
+		ADC.GetAdcRawData()
+		#print(ADC.GetNumOfMeasurement())
+
+		#time.sleep(0.05)
 except:
+	end = time.time()
+	print(end - start)
+	print(ADC.GetNumOfMeasurement() / (end - start))
 	print("Unexpected error:", sys.exc_info()[0])
 	raise
 	GPIO.cleanup()
